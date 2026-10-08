@@ -1,0 +1,1192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>U ME KAPE — Complete QR Ordering & Barista OS Ecosystem</title>
+  
+  <!-- Fonts: Space Grotesk, Inter, JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700;800&family=Space+Grotesk:wght@600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#12100E',
+            surface: '#1E1A17',
+            'surface-hover': '#26221E',
+            border: '#2C2622',
+            'border-light': '#3D352F',
+            milk: '#F9F8F6',
+            robusta: '#1A110D',
+            tea: '#E55B13',
+            'tea-hover': '#cf4d0a',
+            divider: '#E5E3DB',
+            badge: '#EAE5DD',
+            ready: '#10B981',
+            overdue: '#EF4444',
+            preparing: '#F59E0B'
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'sans-serif'],
+            sans: ['Inter', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace']
+          },
+          boxShadow: {
+            'brutal': '2px 2px 0px #1A110D',
+            'brutal-lg': '4px 4px 0px #1A110D',
+            'pos-card': '0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- React 18 & Babel Standalone -->
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+
+  <style>
+    .bg-grain {
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.035'/%3E%3C/svg%3E");
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #12100E; }
+    ::-webkit-scrollbar-thumb { background: #2C2622; border-radius: 2px; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    @keyframes pulse-urgent {
+      0%, 100% { opacity: 1; border-color: #EF4444; }
+      50% { opacity: 0.85; border-color: rgba(239, 68, 68, 0.35); }
+    }
+    .urgent-flash { animation: pulse-urgent 1.4s infinite; }
+
+    @keyframes new-drop {
+      0% { transform: translateY(-8px) scale(0.98); opacity: 0; }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    .card-drop-in { animation: new-drop 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+  </style>
+</head>
+<body class="bg-[#0C0A09] text-milk font-sans antialiased overflow-x-hidden">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    let audioCtx = null;
+    let wakeLockInstance = null;
+
+    const getAudioContext = () => {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) audioCtx = new AudioContext();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    };
+
+    const playChime = (type = 'incoming') => {
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        if (type === 'incoming') {
+          const osc1 = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc1.type = 'triangle';
+          osc1.frequency.setValueAtTime(587.33, now); // D5
+          osc1.frequency.setValueAtTime(880.00, now + 0.12); // A5
+          gain.gain.setValueAtTime(0.15, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+          osc1.connect(gain);
+          gain.connect(ctx.destination);
+          osc1.start(now);
+          osc1.stop(now + 0.4);
+        } else if (type === 'advance') {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(987.77, now); // B5
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.1);
+        }
+      } catch (e) {
+        console.warn('Audio feedback failed', e);
+      }
+    };
+
+    const REAL_MENU = [
+      {
+        id: 'phin-01',
+        name: 'Ca Phe Sua Da',
+        category: 'Cà Phê',
+        tag: 'SLOW DRIP ROBUSTA',
+        description: 'Brewed slow through stainless steel Phin filter over rich condensed milk and ice. Extreme caffeine punch.',
+        price: 120,
+        caffeine: 'HIGH ROBUSTA',
+        temp: 'ICED ONLY',
+        artBg: 'bg-[#EFE6DC]',
+        bentoSpan: 'col-span-2',
+        modifiers: ['Less Condensed Milk', 'Less Ice', 'Extra Robusta Pull', 'No Ice']
+      },
+      {
+        id: 'banh-01',
+        name: 'U Me Signature Banh Mi',
+        category: 'Banh Mi',
+        tag: 'HEAVYWEIGHT CRUST',
+        description: 'Crackling airy baguette, savory roast pork belly, chicken liver pate, pickled daikon & carrots, fresh cilantro & bird’s eye chili.',
+        price: 150,
+        temp: 'SERVED HOT',
+        artBg: 'bg-[#F2ECE1]',
+        bentoSpan: 'col-span-2 sm:col-span-1',
+        modifiers: ['No Cilantro', 'Extra Pâté', 'No Chili (Mild)', 'Extra Crispy']
+      },
+      {
+        id: 'latte-01',
+        name: 'Spanish Latte',
+        category: 'Cà Phê',
+        tag: 'STUDENT FUEL',
+        description: 'Double ristretto shot pulled fresh, shaken vigorously with textured sweet milk and a pinch of cinnamon.',
+        price: 140,
+        temp: 'ICED / HOT',
+        artBg: 'bg-[#EAE2D5]',
+        bentoSpan: 'col-span-2 sm:col-span-1',
+        modifiers: ['Less Sweet', 'Oat Milk Sub', 'Extra Shot', 'Iced']
+      },
+      {
+        id: 'bun-01',
+        name: 'Hanoi Kebab Rice Noodle',
+        category: 'Mains & Rice',
+        tag: 'BÚN CHẢ HÀ NỘI',
+        description: 'Flame-charred pork patties, cold rice vermicelli, fresh herbs, pickled green papaya in savory nuoc cham broth.',
+        price: 220,
+        temp: 'CHEF SIGNATURE',
+        artBg: 'bg-[#F4EBE2]',
+        bentoSpan: 'col-span-2',
+        modifiers: ['Extra Nuoc Cham Broth', 'No Chili', 'Extra Noodles (+₱40)']
+      },
+      {
+        id: 'rice-01',
+        name: 'Beef Tapsilog',
+        category: 'Mains & Rice',
+        tag: '24/7 SURVIVAL MEAL',
+        description: 'Marinated heirloom beef tapa strips flash-seared, mountain of toasted garlic rice, and crispy-edged sunny egg.',
+        price: 160,
+        temp: 'FRESHLY COOKED',
+        artBg: 'bg-[#F4ECE3]',
+        bentoSpan: 'col-span-2',
+        modifiers: ['Egg Over-Easy', 'Egg Well Done', 'Extra Garlic Sinangag (+₱30)', 'Spicy Sukang Paombong']
+      },
+      {
+        id: 'rolls-01',
+        name: 'Fresh Vietnamese Spring Rolls',
+        category: 'Mains & Rice',
+        tag: 'GỎI CUỐN (4 PCS)',
+        description: 'Translucent rice paper rolled with steamed shrimp, tender pork, fresh mint, and lettuce with crushed peanut dip.',
+        price: 180,
+        temp: 'CHILLED',
+        artBg: 'bg-[#EBF1E8]',
+        bentoSpan: 'col-span-2 sm:col-span-1',
+        modifiers: ['Extra Peanut Dip', 'Shrimp Only (No Pork)', 'No Mint']
+      },
+      {
+        id: 'tea-01',
+        name: 'Peach Orange Lemongrass Tea',
+        category: 'Refreshers',
+        tag: 'VIET REFRESHER',
+        description: 'Artisanal black tea steeped with wild lemongrass stalks, fresh orange slices, and sweet yellow peach nectar.',
+        price: 130,
+        temp: '700ML ICED',
+        artBg: 'bg-[#F6E8DF]',
+        bentoSpan: 'col-span-2 sm:col-span-1',
+        modifiers: ['Less Sweet', 'Less Ice', 'Extra Peach Slices']
+      }
+    ];
+
+    const CATEGORIES = ['All', 'Cà Phê', 'Banh Mi', 'Mains & Rice', 'Refreshers'];
+
+    const INITIAL_BARISTA_ORDERS = [
+      {
+        id: 'ord-101',
+        branch: 'Taft',
+        orderNum: '#101',
+        customerName: 'Guest (Table 04)',
+        source: 'QR / TBL-04',
+        type: 'DINE-IN',
+        timestamp: Date.now() - 340000,
+        status: 'new',
+        payment: 'GCASH // VERIFIED',
+        total: 270,
+        items: [
+          { qty: 1, name: 'Ca Phe Sua Da', note: 'Less Ice, Extra Robusta Pull' },
+          { qty: 1, name: 'U Me Signature Banh Mi', note: 'No Cilantro, Extra Pâté' }
+        ]
+      },
+      {
+        id: 'ord-102',
+        branch: 'Taft',
+        orderNum: '#102',
+        customerName: 'Guest (Counter)',
+        source: 'COUNTER',
+        type: 'TAKEOUT',
+        timestamp: Date.now() - 190000,
+        status: 'new',
+        payment: 'GCASH // VERIFIED',
+        total: 440,
+        items: [
+          { qty: 2, name: 'Spanish Latte', note: 'Extra Sweet, Iced' },
+          { qty: 1, name: 'Beef Tapsilog', note: 'Egg Over-Easy' }
+        ]
+      },
+      {
+        id: 'ord-103',
+        branch: 'Taft',
+        orderNum: '#103',
+        customerName: 'Guest (Table 08)',
+        source: 'QR / TBL-08',
+        type: 'DINE-IN',
+        timestamp: Date.now() - 250000,
+        status: 'preparing',
+        payment: 'MAYA // VERIFIED',
+        total: 250,
+        items: [
+          { qty: 1, name: 'Peach Orange Lemongrass Tea', note: 'Less Sweet' },
+          { qty: 1, name: 'Ca Phe Sua Da', note: 'Standard Phin' }
+        ]
+      },
+      {
+        id: 'ord-104',
+        branch: 'Taft',
+        orderNum: '#104',
+        customerName: 'Guest (Counter)',
+        source: 'COUNTER',
+        type: 'TAKEOUT',
+        timestamp: Date.now() - 480000,
+        readyAt: Date.now() - 60000,
+        status: 'ready',
+        payment: 'CASH // TENDERED',
+        total: 150,
+        items: [
+          { qty: 1, name: 'U Me Signature Banh Mi', note: 'Extra Crispy' }
+        ]
+      },
+      {
+        id: 'ord-201',
+        branch: 'Recto',
+        orderNum: '#201',
+        customerName: 'Guest (Table 02)',
+        source: 'QR / TBL-02',
+        type: 'DINE-IN',
+        timestamp: Date.now() - 120000,
+        status: 'new',
+        payment: 'GCASH // VERIFIED',
+        total: 220,
+        items: [
+          { qty: 1, name: 'Hanoi Kebab Rice Noodle', note: 'Extra Nuoc Cham Broth' }
+        ]
+      }
+    ];
+
+    function App() {
+      const [appMode, setAppMode] = useState('split');
+      const [branch, setBranch] = useState('Taft');
+      const [baristaTab, setBaristaTab] = useState('queue');
+      const [orders, setOrders] = useState(INITIAL_BARISTA_ORDERS);
+      const [currentTime, setCurrentTime] = useState(new Date());
+      const [soundActive, setSoundActive] = useState(false);
+      const [wakeLockActive, setWakeLockActive] = useState(false);
+      const [completedCount, setCompletedCount] = useState(14);
+      const [nextOrderSeq, setNextOrderSeq] = useState(105);
+
+      const [activeCategory, setActiveCategory] = useState('All');
+      const [cart, setCart] = useState([]);
+      const [cartPulsing, setCartPulsing] = useState(false);
+      const [cartDrawerOpen, setCartDrawerOpen] = useState(false);
+      const [customerActiveOrder, setCustomerActiveOrder] = useState(null);
+      const [cartNotice, setCartNotice] = useState('');
+
+      const [inventory86, setInventory86] = useState({
+        Taft: {
+          'rolls-01': false,
+          'banh-01': false
+        },
+        Recto: {
+          'bun-01': false
+        }
+      });
+
+      useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      const requestWakeLock = async () => {
+        try {
+          if ('wakeLock' in navigator) {
+            wakeLockInstance = await navigator.wakeLock.request('screen');
+            setWakeLockActive(true);
+            wakeLockInstance.addEventListener('release', () => {
+              setWakeLockActive(false);
+              wakeLockInstance = null;
+            });
+          }
+        } catch (e) {
+          console.log('WakeLock not granted', e);
+        }
+      };
+
+      const handleArmSystem = () => {
+        getAudioContext();
+        setSoundActive(true);
+        requestWakeLock();
+        playChime('incoming');
+      };
+
+      const toggle86Item = (itemId) => {
+        setInventory86(prev => {
+          const currentBranchMap = prev[branch] || {};
+          return {
+            ...prev,
+            [branch]: {
+              ...currentBranchMap,
+              [itemId]: !currentBranchMap[itemId]
+            }
+          };
+        });
+      };
+
+      const filteredMenu = useMemo(() => {
+        if (activeCategory === 'All') return REAL_MENU;
+        return REAL_MENU.filter(item => item.category === activeCategory);
+      }, [activeCategory]);
+
+      const activeBranch86 = inventory86[branch] || {};
+
+      const totalItemsCount = useMemo(() => {
+        return cart.reduce((sum, item) => sum + item.qty, 0);
+      }, [cart]);
+
+      const totalCartAmount = useMemo(() => {
+        return cart.reduce((sum, line) => {
+          const m = REAL_MENU.find(x => x.id === line.id);
+          return sum + (m ? m.price * line.qty : 0);
+        }, 0);
+      }, [cart]);
+
+      const handleAddToCart = (itemId) => {
+        if (activeBranch86[itemId]) return;
+        setCart(prev => {
+          const existing = prev.find(l => l.id === itemId);
+          if (existing) {
+            return prev.map(l => l.id === itemId ? { ...l, qty: l.qty + 1 } : l);
+          }
+          return [...prev, { uid: Date.now() + Math.random(), id: itemId, qty: 1, modifiers: [] }];
+        });
+        setCartPulsing(true);
+        setTimeout(() => setCartPulsing(false), 300);
+      };
+
+      const handleIncrementLine = (uid) => {
+        setCart(prev => prev.map(l => l.uid === uid ? { ...l, qty: l.qty + 1 } : l));
+      };
+
+      const handleDecrementLine = (uid) => {
+        setCart(prev => {
+          return prev.map(l => l.uid === uid ? { ...l, qty: l.qty - 1 } : l).filter(l => l.qty > 0);
+        });
+      };
+
+      const handleToggleModifier = (uid, modText) => {
+        setCart(prev => prev.map(line => {
+          if (line.uid !== uid) return line;
+          const hasMod = line.modifiers.includes(modText);
+          const nextMods = hasMod 
+            ? line.modifiers.filter(m => m !== modText)
+            : [...line.modifiers, modText];
+          return { ...line, modifiers: nextMods };
+        }));
+      };
+
+      const handleCustomerCheckout = () => {
+        const validLines = cart.filter(l => !activeBranch86[l.id]);
+        if (validLines.length < cart.length) {
+          setCartNotice('Sold out items were removed from your ticket.');
+        }
+
+        if (validLines.length === 0) {
+          setCart([]);
+          setCartDrawerOpen(false);
+          return;
+        }
+
+        const orderNumStr = `#${nextOrderSeq}`;
+        const newOrderId = `ord-${Date.now()}`;
+        
+        const lineItems = validLines.map(l => {
+          const item = REAL_MENU.find(m => m.id === l.id);
+          return {
+            qty: l.qty,
+            name: item.name,
+            note: l.modifiers.join(', ') || 'Standard Build'
+          };
+        });
+
+        const calculatedTotal = validLines.reduce((sum, l) => {
+          const item = REAL_MENU.find(m => m.id === l.id);
+          return sum + (item.price * l.qty);
+        }, 0);
+
+        const newOrderObj = {
+          id: newOrderId,
+          branch: branch,
+          orderNum: orderNumStr,
+          customerName: 'You (Table 04)',
+          source: 'QR / TBL-04',
+          type: 'DINE-IN',
+          timestamp: Date.now(),
+          status: 'new',
+          payment: 'GCASH // VERIFIED',
+          total: calculatedTotal,
+          items: lineItems
+        };
+
+        if (soundActive) playChime('incoming');
+
+        setOrders(prev => [newOrderObj, ...prev]);
+        setCustomerActiveOrder(newOrderObj);
+        setNextOrderSeq(seq => seq + 1);
+        setCart([]);
+        setCartDrawerOpen(false);
+      };
+
+      const handleAdvanceBaristaStatus = (orderId) => {
+        let isNowCompleted = false;
+
+        setOrders(prevOrders => {
+          const next = [];
+          for (const order of prevOrders) {
+            if (order.id === orderId) {
+              if (order.status === 'new') {
+                const updated = { ...order, status: 'preparing', prepStartedAt: Date.now() };
+                if (customerActiveOrder && customerActiveOrder.id === orderId) {
+                  setCustomerActiveOrder(updated);
+                }
+                next.push(updated);
+              } else if (order.status === 'preparing') {
+                const updated = { ...order, status: 'ready', readyAt: Date.now() };
+                if (customerActiveOrder && customerActiveOrder.id === orderId) {
+                  setCustomerActiveOrder(updated);
+                }
+                next.push(updated);
+              } else if (order.status === 'ready') {
+                isNowCompleted = true;
+                if (customerActiveOrder && customerActiveOrder.id === orderId) {
+                  setCustomerActiveOrder({ ...order, status: 'completed' });
+                  setTimeout(() => setCustomerActiveOrder(null), 3500);
+                }
+              }
+            } else {
+              next.push(order);
+            }
+          }
+          return next;
+        });
+
+        if (isNowCompleted) {
+          setCompletedCount(c => c + 1);
+        }
+        if (soundActive) {
+          playChime('advance');
+        }
+      };
+
+      const handleSimulateCounterOrder = () => {
+        if (!soundActive) {
+          getAudioContext();
+          setSoundActive(true);
+          requestWakeLock();
+        } else {
+          playChime('incoming');
+        }
+
+        const randomItem = REAL_MENU[Math.floor(Math.random() * REAL_MENU.length)];
+        const orderNumStr = `#${nextOrderSeq}`;
+        const newOrderId = `ord-${Date.now()}`;
+
+        const simulatedOrder = {
+          id: newOrderId,
+          branch: branch,
+          orderNum: orderNumStr,
+          customerName: `Walk-in Guest (${orderNumStr})`,
+          source: 'COUNTER',
+          type: 'TAKEOUT',
+          timestamp: Date.now(),
+          status: 'new',
+          payment: 'CASH // TENDERED',
+          total: randomItem.price,
+          items: [{ qty: 1, name: randomItem.name, note: 'Walk-in Counter Order' }]
+        };
+
+        setOrders(prev => [simulatedOrder, ...prev]);
+        setNextOrderSeq(seq => seq + 1);
+      };
+
+      const branchOrders = useMemo(() => {
+        return orders.filter(o => o.branch === branch);
+      }, [orders, branch]);
+
+      const newOrders = useMemo(() => branchOrders.filter(o => o.status === 'new'), [branchOrders]);
+      const prepOrders = useMemo(() => branchOrders.filter(o => o.status === 'preparing'), [branchOrders]);
+      const readyOrders = useMemo(() => branchOrders.filter(o => o.status === 'ready'), [branchOrders]);
+
+      return (
+        <div className="min-h-screen bg-[#0C0A09] text-milk flex flex-col">
+          
+          <header className="bg-[#171412] border-b border-border px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono shrink-0 z-50">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-tea"></span>
+              <span className="font-display font-black text-sm text-milk tracking-tight">U ME KAPE</span>
+              <span className="text-stone-400">// LIVE PITCH SIMULATOR</span>
+            </div>
+
+            <div className="bg-surface p-1 rounded-md border border-border flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setAppMode('split')}
+                className={`px-3 py-1 rounded transition-colors ${
+                  appMode === 'split' ? 'bg-tea text-milk font-bold shadow' : 'text-stone-400 hover:text-milk'
+                }`}
+              >
+                ⚡ Live Dual Simulator (Pitch Mode)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAppMode('customer')}
+                className={`px-3 py-1 rounded transition-colors ${
+                  appMode === 'customer' ? 'bg-tea text-milk font-bold shadow' : 'text-stone-400 hover:text-milk'
+                }`}
+              >
+                📱 Customer QR View (Mobile)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAppMode('barista')}
+                className={`px-3 py-1 rounded transition-colors ${
+                  appMode === 'barista' ? 'bg-tea text-milk font-bold shadow' : 'text-stone-400 hover:text-milk'
+                }`}
+              >
+                💻 Barista POS View (iPad)
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 bg-surface px-2 py-1 rounded border border-border">
+                <span className="text-stone-400">BRANCH:</span>
+                <button
+                  type="button"
+                  onClick={() => setBranch(b => b === 'Taft' ? 'Recto' : 'Taft')}
+                  className="font-bold text-tea underline"
+                >
+                  {branch.toUpperCase()} (Toggle)
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleArmSystem}
+                className={`px-2.5 py-1 rounded border font-bold text-[11px] transition-colors ${
+                  soundActive 
+                    ? 'bg-emerald-950 text-emerald-400 border-emerald-800' 
+                    : 'bg-amber-950 text-amber-300 border-amber-800 animate-pulse'
+                }`}
+              >
+                {soundActive ? (wakeLockActive ? '🔊 ARMED & KEEP-AWAKE' : '🔊 ARMED') : '⚡ TAP TO ARM AUDIO'}
+              </button>
+            </div>
+          </header>
+
+          <main className="flex-1 flex overflow-hidden">
+            
+            {/* 1. CUSTOMER SIDE */}
+            {(appMode === 'split' || appMode === 'customer') && (
+              <div className={`flex flex-col items-center justify-start p-4 ${
+                appMode === 'split' ? 'w-full lg:w-[420px] border-r border-border shrink-0 bg-[#0C0A09] overflow-y-auto' : 'w-full max-w-md mx-auto overflow-y-auto'
+              }`}>
+                
+                {appMode === 'split' && (
+                  <div className="w-full flex justify-between items-center mb-2 px-1 text-[10px] font-mono text-stone-400 uppercase">
+                    <span>[ CUSTOMER PHONE // TABLE 04 ]</span>
+                    <span className="text-tea font-bold">{branch.toUpperCase()} BRANCH</span>
+                  </div>
+                )}
+
+                <div className="w-full max-w-[390px] bg-milk text-robusta rounded-2xl border-2 border-robusta shadow-2xl overflow-hidden flex flex-col relative min-h-[760px] bg-grain">
+                  
+                  <div className="bg-robusta text-milk px-4 py-1.5 flex justify-between items-center text-[10px] font-mono tracking-wider">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span className="font-bold text-tea">OPEN 24/7</span>
+                      <span className="text-stone-300">// {branch.toUpperCase()}</span>
+                    </div>
+                    <span className="font-bold">QR: TBL-04</span>
+                  </div>
+
+                  <div className="sticky top-0 z-30 bg-milk/95 backdrop-blur-md border-b border-robusta px-4 py-2.5 flex items-center justify-between">
+                    <div>
+                      <h1 className="font-display font-black text-xl tracking-tighter leading-none text-robusta flex items-baseline gap-1">
+                        U ME KAPE
+                        <span className="w-1.5 h-1.5 rounded-full bg-tea inline-block"></span>
+                      </h1>
+                      <p className="text-[9px] font-mono tracking-widest text-stone-500 uppercase mt-0.5">
+                        {branch === 'Taft' ? '2635-E Taft Ave, Manor Bldg' : '1985 Recto Ave, Sampaloc'}
+                      </p>
+                    </div>
+
+                    <div className="bg-badge px-2 py-0.5 rounded-full border border-robusta text-[10px] font-mono font-bold">
+                      {branch}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto pb-24">
+                    
+                    {customerActiveOrder && (
+                      <div className="m-3 p-3 bg-robusta text-milk rounded border border-robusta shadow-brutal animate-new-drop">
+                        <div className="flex justify-between items-start text-xs font-mono mb-1">
+                          <span className="font-bold text-tea">{customerActiveOrder.orderNum} ACTIVE</span>
+                          <span className="text-[10px] bg-stone-800 px-1.5 py-0.2 rounded text-stone-300 uppercase">
+                            {customerActiveOrder.status}
+                          </span>
+                        </div>
+
+                        <div className="text-sm font-display font-black">
+                          {customerActiveOrder.status === 'new' && '⏳ Ticket sent to barista! Queueing up...'}
+                          {customerActiveOrder.status === 'preparing' && '☕ Barista Marco is brewing your order!'}
+                          {customerActiveOrder.status === 'ready' && '🎉 ORDER READY! Pick up at the counter.'}
+                          {customerActiveOrder.status === 'completed' && '✅ Order completed! Enjoy your kape.'}
+                        </div>
+
+                        <p className="text-[10px] font-mono text-stone-400 mt-1">
+                          Total: ₱{customerActiveOrder.total} • Paid via GCash
+                        </p>
+                      </div>
+                    )}
+
+                    {cartNotice && (
+                      <div className="m-3 p-2 bg-amber-100 border border-amber-300 text-amber-900 text-xs font-mono rounded flex justify-between items-center">
+                        <span>{cartNotice}</span>
+                        <button onClick={() => setCartNotice('')} className="font-bold ml-2">✕</button>
+                      </div>
+                    )}
+
+                    <div className="px-4 pt-4 pb-2">
+                      <div className="inline-block bg-tea/10 border border-tea/30 text-tea px-2 py-0.5 text-[9px] font-mono font-bold tracking-widest uppercase rounded-sm mb-1.5">
+                        Instant Table Service
+                      </div>
+                      <h2 className="font-display font-black text-2xl leading-[0.92] tracking-tight uppercase text-robusta">
+                        SLEEP IS WEAK.<br />
+                        <span className="text-tea">COFFEE IS STRONG.</span>
+                      </h2>
+                      <p className="text-[11px] font-sans text-stone-600 mt-1">
+                        Order here, pick up at the counter. No need to pack your laptop.
+                      </p>
+                    </div>
+
+                    <div className="sticky top-[49px] z-20 bg-milk/95 backdrop-blur-sm border-y border-divider py-2 px-3 overflow-x-auto no-scrollbar flex items-center gap-1.5">
+                      {CATEGORIES.map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => setActiveCategory(cat)}
+                          className={`whitespace-nowrap px-3 py-1 text-[11px] font-display font-bold rounded-full border transition-all ${
+                            activeCategory === cat
+                              ? 'bg-robusta text-milk border-robusta shadow-brutal'
+                              : 'bg-white text-robusta border-robusta/30 hover:border-robusta'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="p-3 grid grid-cols-2 gap-2.5">
+                      {filteredMenu.map(item => {
+                        const is86 = activeBranch86[item.id];
+                        const line = cart.find(l => l.id === item.id);
+                        const qty = line ? line.qty : 0;
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`${item.bentoSpan} bg-white border border-robusta rounded p-2.5 flex flex-col justify-between hover:shadow-brutal transition-all ${
+                              is86 ? 'opacity-60 bg-stone-100' : ''
+                            }`}
+                          >
+                            <div>
+                              <div className="flex justify-between items-start text-[8px] font-mono mb-1">
+                                <span className="font-bold bg-stone-100 border border-stone-200 px-1 py-0.2 rounded">
+                                  {item.tag}
+                                </span>
+                                {item.temp && <span className="text-stone-400 font-semibold">{item.temp}</span>}
+                              </div>
+
+                              <div className={`w-full h-20 ${item.artBg} border border-robusta/20 rounded mb-2 flex items-center justify-center font-mono text-[9px] font-bold text-stone-600 uppercase relative overflow-hidden`}>
+                                [ {item.name.slice(0, 14)} ]
+                                {is86 && (
+                                  <div className="absolute inset-0 bg-red-950/80 text-white flex items-center justify-center font-mono font-bold text-[10px] tracking-wider">
+                                    SOLD OUT
+                                  </div>
+                                )}
+                              </div>
+
+                              <h3 className="font-display font-black text-sm text-robusta leading-tight">
+                                {item.name}
+                              </h3>
+                              <p className="text-[10px] text-stone-600 mt-0.5 line-clamp-2 leading-snug">
+                                {item.description}
+                              </p>
+                            </div>
+
+                            <div className="pt-2 border-t border-divider flex items-center justify-between mt-2">
+                              <span className="font-mono font-black text-base text-robusta">
+                                ₱{item.price}
+                              </span>
+
+                              {is86 ? (
+                                <span className="text-[9px] font-mono font-bold text-red-600 border border-red-500 rounded px-1.5 py-0.5">
+                                  86'D
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddToCart(item.id)}
+                                  className="w-8 h-8 rounded bg-robusta text-milk border border-robusta flex items-center justify-center font-mono font-bold text-base hover:bg-tea active:scale-95 transition-all shadow-brutal"
+                                >
+                                  {qty > 0 ? `${qty}` : '+'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {totalItemsCount > 0 && (
+                    <div className="absolute bottom-3 left-3 right-3 z-30">
+                      <button
+                        type="button"
+                        onClick={() => setCartDrawerOpen(true)}
+                        className={`w-full bg-tea text-milk border-2 border-robusta rounded-full py-3 px-4 flex items-center justify-between shadow-brutal-lg transition-transform active:scale-[0.98] ${
+                          cartPulsing ? 'scale-[1.03] ring-4 ring-tea/40' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-robusta text-milk font-mono text-xs font-bold flex items-center justify-center">
+                            {totalItemsCount}
+                          </span>
+                          <span className="font-display font-black text-xs uppercase tracking-wide">
+                            View Bag
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 font-mono text-xs">
+                          <span>₱{totalCartAmount}</span>
+                          <span>→</span>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+
+                  {cartDrawerOpen && (
+                    <div className="absolute inset-0 z-40 bg-robusta/70 backdrop-blur-xs flex flex-col justify-end">
+                      <div className="bg-milk border-t-2 border-robusta p-4 rounded-t-xl max-h-[85%] flex flex-col">
+                        <div className="flex justify-between items-center border-b border-robusta pb-2 mb-2">
+                          <div>
+                            <h3 className="font-display font-black text-base text-robusta uppercase">
+                              Table 04 Order Bag
+                            </h3>
+                            <p className="text-[10px] font-mono text-stone-500">
+                              {branch.toUpperCase()} BRANCH // NIGHT SHIFT
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setCartDrawerOpen(false)}
+                            className="font-mono text-xs font-bold border border-robusta px-2 py-0.5 rounded"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto space-y-3 py-2 divide-y divide-divider no-scrollbar">
+                          {cart.map((line) => {
+                            const item = REAL_MENU.find(m => m.id === line.id);
+                            if (!item) return null;
+                            const isSoldOut = activeBranch86[item.id];
+
+                            return (
+                              <div key={line.uid} className="pt-2 first:pt-0">
+                                <div className="flex justify-between items-center text-xs">
+                                  <div>
+                                    <span className="font-bold text-sm text-robusta">{item.name}</span>
+                                    {isSoldOut && <span className="ml-1 text-[9px] font-bold text-red-600 border border-red-500 rounded px-1">SOLD OUT</span>}
+                                    <div className="text-stone-500 font-mono text-[10px]">₱{item.price * line.qty}</div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1 border border-robusta bg-white px-1 py-0.5 rounded">
+                                    <button onClick={() => handleDecrementLine(line.uid)} className="px-1.5 font-bold">-</button>
+                                    <span className="font-mono font-bold px-1">{line.qty}</span>
+                                    <button onClick={() => handleIncrementLine(line.uid)} className="px-1.5 font-bold">+</button>
+                                  </div>
+                                </div>
+
+                                {!isSoldOut && item.modifiers && item.modifiers.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {item.modifiers.map(mod => {
+                                      const isSelected = line.modifiers.includes(mod);
+                                      return (
+                                        <button
+                                          key={mod}
+                                          type="button"
+                                          onClick={() => handleToggleModifier(line.uid, mod)}
+                                          className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${
+                                            isSelected
+                                              ? 'bg-amber-400 border-amber-500 text-black font-bold'
+                                              : 'bg-white border-stone-300 text-stone-600 hover:border-robusta'
+                                          }`}
+                                        >
+                                          {isSelected ? `✓ ${mod}` : `+ ${mod}`}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="border-t border-dashed border-robusta pt-2 mt-2 font-mono text-xs flex justify-between font-bold">
+                          <span>TOTAL DUE:</span>
+                          <span className="text-tea font-black text-sm">₱{totalCartAmount}</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleCustomerCheckout}
+                          className="mt-3 w-full bg-robusta text-milk border-2 border-robusta py-3 rounded font-display font-black text-xs uppercase tracking-wider hover:bg-tea shadow-brutal active:scale-98 transition-colors"
+                        >
+                          PAY VIA GCASH & TRANSMIT (₱{totalCartAmount})
+                        </button>
+                        <p className="text-[9px] font-mono text-stone-500 text-center mt-1">
+                          Simulated payment intent. No actual money deducted.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            )}
+
+            {/* 2. BARISTA FOH / KITCHEN POS SIDE */}
+            {(appMode === 'split' || appMode === 'barista') && (
+              <div className="flex-1 flex flex-col bg-bg overflow-hidden">
+                
+                {appMode === 'split' && (
+                  <div className="bg-surface border-b border-border px-4 py-1.5 flex justify-between items-center text-[10px] font-mono text-stone-400 uppercase">
+                    <span>[ BARISTA iPad SCREEN // COUNTER ]</span>
+                    <span className="text-emerald-400">● REALTIME SYNC WITH TABLE ORDERS</span>
+                  </div>
+                )}
+
+                <header className="h-14 border-b border-border bg-surface px-4 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-bg p-0.5 rounded border border-border flex items-center text-xs font-mono">
+                      <button
+                        type="button"
+                        onClick={() => setBaristaTab('queue')}
+                        className={`px-3 py-1 rounded transition-colors ${
+                          baristaTab === 'queue' ? 'bg-tea text-milk font-bold' : 'text-stone-400 hover:text-milk'
+                        }`}
+                      >
+                        Live Queue ({branchOrders.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBaristaTab('stock')}
+                        className={`px-3 py-1 rounded transition-colors ${
+                          baristaTab === 'stock' ? 'bg-tea text-milk font-bold' : 'text-stone-400 hover:text-milk'
+                        }`}
+                      >
+                        86 Stock Manager
+                      </button>
+                    </div>
+
+                    <div className="h-4 w-px bg-border"></div>
+
+                    <div className="flex items-center gap-1.5 font-mono text-xs">
+                      <span className="text-stone-400">SHIFT COMPLETED:</span>
+                      <span className="font-bold text-emerald-400">{completedCount}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSimulateCounterOrder}
+                      className="bg-stone-800 hover:bg-stone-700 text-stone-200 border border-border px-3 py-1.5 rounded font-mono text-xs font-bold transition-colors"
+                    >
+                      + Simulate Counter Walk-in
+                    </button>
+
+                    <div className="text-xs font-mono text-stone-400">
+                      CLOCK: <span className="font-black text-milk">{currentTime.toLocaleTimeString('en-US', { hour12: false })}</span>
+                    </div>
+                  </div>
+                </header>
+
+                {baristaTab === 'queue' && (
+                  <div className="flex-1 p-4 grid grid-cols-3 gap-4 overflow-hidden">
+                    
+                    {/* COLUMN 1: NEW */}
+                    <div className="flex flex-col bg-surface border border-tea/40 rounded-lg overflow-hidden h-full">
+                      <div className="px-3 py-2 border-b border-border bg-stone-900/60 flex items-center justify-between shrink-0">
+                        <span className="font-mono font-bold text-xs tracking-wider text-milk">NEW TICKETS</span>
+                        <span className="px-2 py-0.2 text-xs font-mono rounded bg-tea text-milk font-black">
+                          {newOrders.length}
+                        </span>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+                        {newOrders.length === 0 ? (
+                          <div className="h-28 border border-dashed border-border rounded flex items-center justify-center text-stone-500 font-mono text-xs text-center p-3">
+                            NO ACTIVE TICKETS<br />(Place one from the left phone!)
+                          </div>
+                        ) : (
+                          newOrders.map(ord => (
+                            <BaristaOrderCard
+                              key={ord.id}
+                              order={ord}
+                              column="new"
+                              actionLabel="START PREPARING"
+                              actionColor="bg-tea hover:bg-tea-hover text-milk"
+                              onAdvance={() => handleAdvanceBaristaStatus(ord.id)}
+                              currentTime={currentTime}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* COLUMN 2: PREPARING */}
+                    <div className="flex flex-col bg-surface border border-amber-500/40 rounded-lg overflow-hidden h-full">
+                      <div className="px-3 py-2 border-b border-border bg-stone-900/60 flex items-center justify-between shrink-0">
+                        <span className="font-mono font-bold text-xs tracking-wider text-milk">PREPARING</span>
+                        <span className="px-2 py-0.2 text-xs font-mono rounded bg-amber-500 text-black font-black">
+                          {prepOrders.length}
+                        </span>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+                        {prepOrders.length === 0 ? (
+                          <div className="h-28 border border-dashed border-border rounded flex items-center justify-center text-stone-500 font-mono text-xs">
+                            NO ORDERS BREWING
+                          </div>
+                        ) : (
+                          prepOrders.map(ord => (
+                            <BaristaOrderCard
+                              key={ord.id}
+                              order={ord}
+                              column="preparing"
+                              actionLabel="MARK READY"
+                              actionColor="bg-amber-500 hover:bg-amber-400 text-black font-black"
+                              onAdvance={() => handleAdvanceBaristaStatus(ord.id)}
+                              currentTime={currentTime}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* COLUMN 3: READY FOR PICKUP */}
+                    <div className="flex flex-col bg-surface border border-emerald-500/40 rounded-lg overflow-hidden h-full">
+                      <div className="px-3 py-2 border-b border-border bg-stone-900/60 flex items-center justify-between shrink-0">
+                        <span className="font-mono font-bold text-xs tracking-wider text-milk">READY FOR PICKUP</span>
+                        <span className="px-2 py-0.2 text-xs font-mono rounded bg-emerald-500 text-black font-black">
+                          {readyOrders.length}
+                        </span>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+                        {readyOrders.length === 0 ? (
+                          <div className="h-28 border border-dashed border-border rounded flex items-center justify-center text-stone-500 font-mono text-xs">
+                            NO DRINKS AT COUNTER
+                          </div>
+                        ) : (
+                          readyOrders.map(ord => (
+                            <BaristaOrderCard
+                              key={ord.id}
+                              order={ord}
+                              column="ready"
+                              actionLabel="DISPENSE & CLEAR"
+                              actionColor="bg-emerald-500 hover:bg-emerald-400 text-black font-black"
+                              onAdvance={() => handleAdvanceBaristaStatus(ord.id)}
+                              currentTime={currentTime}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+                {baristaTab === 'stock' && (
+                  <div className="flex-1 p-5 overflow-y-auto">
+                    <div className="max-w-4xl mx-auto">
+                      <div className="flex justify-between items-baseline mb-4 pb-2 border-b border-border">
+                        <div>
+                          <h2 className="font-display font-black text-xl text-milk">
+                            86 STOCK OVERRIDE // {branch.toUpperCase()}
+                          </h2>
+                          <p className="text-xs font-mono text-stone-400">
+                            Tapping an item locks it out of customer QR ordering in real time.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                        {REAL_MENU.map(item => {
+                          const is86 = activeBranch86[item.id];
+                          return (
+                            <div 
+                              key={item.id}
+                              className={`p-3.5 rounded border flex flex-col justify-between transition-colors ${
+                                is86 ? 'bg-red-950/20 border-red-800' : 'bg-surface border-border'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex justify-between text-[10px] font-mono mb-1">
+                                  <span className="text-stone-400">{item.category}</span>
+                                  <span className={is86 ? 'text-red-400 font-bold' : 'text-emerald-400'}>
+                                    {is86 ? '86 STATUS ACTIVE' : 'IN STOCK'}
+                                  </span>
+                                </div>
+                                <h3 className="font-display font-bold text-sm text-milk">{item.name}</h3>
+                                <p className="text-[10px] font-mono text-stone-400 mt-0.5">₱{item.price}</p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => toggle86Item(item.id)}
+                                className={`mt-3 py-2 px-3 rounded font-mono text-xs font-bold border transition-colors ${
+                                  is86
+                                    ? 'bg-red-600 hover:bg-red-500 text-white border-red-500'
+                                    : 'bg-stone-800 hover:bg-stone-700 text-stone-200 border-border'
+                                }`}
+                              >
+                                {is86 ? '86’D — CLICK TO RESTORE' : 'MARK 86 (SOLD OUT)'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+          </main>
+        </div>
+      );
+    }
+
+    function BaristaOrderCard({ order, column, actionLabel, actionColor, onAdvance, currentTime }) {
+      const elapsedTotalSeconds = Math.max(0, Math.floor((currentTime.getTime() - order.timestamp) / 1000));
+      const mins = Math.floor(elapsedTotalSeconds / 60);
+      const secs = elapsedTotalSeconds % 60;
+      const formattedTimer = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+      const isOverdue = (column === 'new' || column === 'preparing') && elapsedTotalSeconds >= 300;
+
+      let readyStr = '';
+      if (column === 'ready') {
+        const rSecs = order.readyAt ? Math.max(0, Math.floor((currentTime.getTime() - order.readyAt) / 1000)) : 0;
+        readyStr = `READY ${Math.floor(rSecs / 60)}m ${rSecs % 60}s`;
+      }
+
+      return (
+        <div className={`card-drop-in bg-bg border rounded p-3 shadow-pos-card transition-all ${
+          isOverdue ? 'border-red-500 urgent-flash' : 'border-border'
+        }`}>
+          <div className="flex justify-between items-start pb-2 border-b border-border">
+            <div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-mono font-black text-lg text-milk">{order.orderNum}</span>
+                <span className="font-display font-bold text-xs text-stone-300">{order.customerName}</span>
+              </div>
+              <span className="text-[9px] font-mono text-stone-400">{order.source} • {order.type}</span>
+            </div>
+
+            <div className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${
+              column === 'ready'
+                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                : isOverdue
+                ? 'bg-red-950 text-red-400 border border-red-800'
+                : 'bg-stone-900 text-stone-400 border border-border'
+            }`}>
+              {column === 'ready' ? readyStr : `⏱ ${formattedTimer}`}
+            </div>
+          </div>
+
+          <div className="py-2 space-y-1.5 text-xs">
+            {order.items.map((it, idx) => (
+              <div key={idx} className="flex items-start gap-1.5">
+                <span className="font-mono font-black text-tea text-xs">{it.qty}x</span>
+                <div className="flex-1 leading-snug">
+                  <span className="font-bold text-milk">{it.name}</span>
+                  {it.note && (
+                    <div className="mt-0.5">
+                      <span className="inline-block text-[10px] text-amber-300 font-mono bg-amber-950/40 border border-amber-900/50 px-1.5 py-0.2 rounded">
+                        ↳ {it.note}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="pt-2 border-t border-border flex justify-between items-center gap-2">
+            <span className="font-mono font-bold text-xs text-stone-300">₱{order.total}</span>
+            <button
+              type="button"
+              onClick={onAdvance}
+              className={`py-1.5 px-3 rounded font-mono font-bold text-[11px] uppercase transition-transform active:scale-95 shadow ${actionColor}`}
+            >
+              {actionLabel} →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
